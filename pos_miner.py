@@ -9,7 +9,7 @@ from xmlrpc.client import ServerProxy
 from xmlrpc.server import SimpleXMLRPCServer
 
 
-class Miner:
+class POSMiner:
     def __init__(self):
         self.id = None
         self.host = None
@@ -218,7 +218,7 @@ class Block:
             .format(self.blockNumber, self.nonce, len(self.transactions), self.prevHash, self.selfHash, self.coinbase)
 
 if __name__ == '__main__':
-    miner = Miner()
+    miner = POSMiner()
     miner.main()
 
     

@@ -1,6 +1,6 @@
 import random
 import pickle
-from miner import Transaction
+from pow_miner import Transaction
 
 def main():
     transactions = []
