@@ -150,14 +150,17 @@ class POWMiner:
 
     def displayTransactions(self):
         for block in self.blockChain:
+            print("===========================")
+            print(f"Block Number: {block.blockNumber}")
             for transaction in block.transactions:
                 print(transaction)
+            print(f"Miner Reward: {block.coinbase}")
 
     def menu(self):
         while True:
             print("Display Ledger\t\t[l]")
             print("Display Blockchain\t[b]")
-            print("Display Transaction\t[t]")
+            print("Display Transactions\t[t]")
             resp = input("Choice: ").lower().split()
             if not resp:
                 continue
@@ -185,6 +188,7 @@ class POWMiner:
         with open('transactions.pkl', 'rb') as f:
             self.transactionPool = pickle.load(f)
         input("Press <enter> to start miner")
+
         self.createMineThread()
         self.updateLedgerThread()
         self.menu()

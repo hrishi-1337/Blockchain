@@ -21,8 +21,9 @@ class POSMiner:
         self.ledgerIndex = 0
         self.transactionPool = []
         self.blockNumber = 1
+        self.leader = None
         self.currentHash = 000000000
-        self.mineBreak = False
+        self.contribution = {}
 
     def createRPCServer(self):
         print("Creating the RPC server for the Node {0}".format(self.id))
@@ -45,34 +46,43 @@ class POSMiner:
         for k, v in self.config.items():
             uri = r"http://" + v[0] + ":" + str(v[1])
             self.map[k] = ServerProxy(uri, allow_none=True)
+            self.contribution[int(k)] = 0
         print("Map: " +str(self.map))
 
-    def createMineThread(self):
-        thread = threading.Thread(target=self.mineBlocks)
+    def rollDiceThread(self):
+        thread = threading.Thread(target=self.rollDice)
         thread.daemon = True
         thread.start()
         return thread
 
-    def mineBlocks(self):
+    def rollDice(self):
+        node_count = len(self.map.keys())
         while True:
-            transactions = []
-            while len(transactions) < 4:
-                transaction = self.transactionPool.pop(0)
-                if self.validateTransaction(transaction):
-                    transactions.append(transaction)
-                    # print("Valid Transaction")
-                else:
-                    # print("Invalid Transaction")
-                    pass
-            print("Block transactions validated")
-            minedBlock = self.hasher(transactions)
-            if isinstance(minedBlock, Block):
-                self.blockChain.append(minedBlock)
-                self.blockNumber += 1
-                self.currentHash = minedBlock.selfHash
-                self.broadcastBlock(minedBlock)
+            chosen = random.randint(1, node_count)
+            print(f"Verifier {chosen} chosen to create block")
+            if self.contribution[chosen] <= 25:
+                self.map[str(chosen)].createBlock()
             else:
+                pass           
+            time.sleep(20)
+            
+    def createBlock(self):
+        print(f"Chosen to create block by Leader node {self.leader}")
+        transactions = []
+        while len(transactions) < 4:
+            transaction = self.transactionPool.pop(0)
+            if self.validateTransaction(transaction):
+                transactions.append(transaction)
+                # print("Valid Transaction")
+            else:
+                # print("Invalid Transaction")
                 pass
+        print("Block transactions validated")
+        reward = Transaction(int(self.id), 0, 10, True)
+        block = Block(self.blockNumber, transactions, self.currentHash, reward)
+        shahash = sha256(str(block).encode('utf-8')).hexdigest()
+        block.selfHash = shahash
+        self.broadcastBlock(block)
 
     def validateTransaction(self, transaction):
         if transaction.sender not in self.ledger:
@@ -82,54 +92,39 @@ class POSMiner:
         else:
             return False
 
-    def hasher(self, transactions):
-        shahash = "aa"
-        print("Mining a Block")
-        while shahash[:2] != "00":
-            nonce = random.randint(0, 100000)
-            block = Block(self.blockNumber, transactions, self.currentHash, nonce)
-            shahash = sha256(str(block).encode('utf-8')).hexdigest()
-            time.sleep(0.25)
-            if self.mineBreak:
-                self.mineBreak = False
-                print("Mining next block")
-                return False
-            if shahash[:2] == "00":
-                print("Block mined!")
-                print(f"nonce: {nonce};  sha: {shahash}")
-                block.selfHash = shahash
-                reward = Transaction(int(self.id), 0, 10, True)
-                block.coinbase = reward
-                return block
-
     def broadcastBlock(self, block):
         for k, v, in self.map.items():
             if k != str(self.id):
                 v.receiveBlock(block)
-  
+
+    def receiveVote(self):
+        pass
+ 
     def receiveBlock(self, block_dict):
         flag = True
         transactions = []
         for transaction in block_dict['transactions']:
             transactions.append(Transaction(transaction['sender'], transaction['receiver'], transaction['amount'], transaction['reward']))
-        coinbase = Transaction(block_dict['coinbase']['sender'], block_dict['coinbase']['receiver'], block_dict['coinbase']['amount'], block_dict['coinbase']['reward'])
-        block = Block(block_dict['blockNumber'], transactions, block_dict['prevHash'], block_dict['nonce'], block_dict['selfHash'], coinbase)
-        print("Block Received")
-        print(block)
-        if  block.prevHash != self.currentHash:
-            print(f"Block doesnt match current chain. Current hash: {self.currentHash};  Block prevHash: {block.prevHash}")
-            flag = False
-        else:
-            for transaction in block.transactions:
-                if not self.validateTransaction(transaction):
-                    print(f"Invalid Transaction: {transaction}")
-                    flag = False
-        if flag:
-            print("Recived Block Added")
-            self.blockChain.append(block)
-            self.blockNumber += 1
-            self.currentHash = block.selfHash
-            self.mineBreak = True
+        creator = Transaction(block_dict['creator']['sender'], block_dict['creator']['receiver'], block_dict['creator']['amount'], block_dict['creator']['reward'])
+        verifier = [ v for v in block_dict['verifiers']]
+        block = Block(block_dict['blockNumber'], transactions, block_dict['prevHash'], creator, block_dict['stake'], block_dict['selfHash'], verifier)
+        
+        
+        # print("Block Received")
+        # print(block)
+        # if  block.prevHash != self.currentHash:
+        #     print(f"Block doesnt match current chain. Current hash: {self.currentHash};  Block prevHash: {block.prevHash}")
+        #     flag = False
+        # else:
+        #     for transaction in block.transactions:
+        #         if not self.validateTransaction(transaction):
+        #             print(f"Invalid Transaction: {transaction}")
+        #             flag = False
+        # if flag:
+        #     print("Recived Block Added")
+        #     self.blockChain.append(block)
+        #     self.blockNumber += 1
+        #     self.currentHash = block.selfHash
 
     def updateLedgerThread(self):
         thread = threading.Thread(target=self.updateLedger)
@@ -175,7 +170,7 @@ class POSMiner:
             self.id = sys.argv[1]
 
         print("Node number : " +self.id)
-        with open("local_config.json", "r") as jsonfile:
+        with open("local_config_2.json", "r") as jsonfile:
             self.config = json.load(jsonfile)
             self.host = self.config[self.id][0]
             self.port = self.config[self.id][1]
@@ -184,9 +179,13 @@ class POSMiner:
         self.createProxyMap()
         with open('transactions.pkl', 'rb') as f:
             self.transactionPool = pickle.load(f)
+        if self.leader == None:
+            self.leader = max(self.map.keys())
+        print(f"Leader Elected : {self.leader}")
         input("Press <enter> to start miner")
-        self.createMineThread()
-        self.updateLedgerThread()
+        if self.leader == self.id:
+            self.rollDiceThread()
+        # self.updateLedgerThread()
         self.menu()
 
 
@@ -202,20 +201,21 @@ class Transaction:
 
 
 class Block:
-    def __init__(self, blockNumber, transactions, prevHash, nonce, selfHash=None, coinbase=None):
+    def __init__(self, blockNumber, transactions, prevHash, creator, stake, selfHash=None,verifiers=[]):
         self.blockNumber = blockNumber
         self.transactions = transactions
         self.prevHash = prevHash
-        self.nonce = nonce
         self.selfHash = selfHash
-        self.coinbase = coinbase
+        self.creator = creator
+        self.verifiers = verifiers
+        self.stake = stake
 
     def __str__(self):
-        return "Block Number:{0} Nonce:{1} Transactions:{2} prevHash:{3} \t".format(self.blockNumber, self.nonce, self.transactions, self.prevHash)
+        return "Block Number:{0} Transactions:{1} prevHash:{2}\t".format(self.blockNumber, self.transactions, self.prevHash)
 
     def __repr__(self):
-        return "Block Number:{0} Nonce:{1} Transaction_count:{2} prevHash:{3} selfHash:{4} Coinbase: {5}\t" \
-            .format(self.blockNumber, self.nonce, len(self.transactions), self.prevHash, self.selfHash, self.coinbase)
+        return "Block Number:{0} Transaction_count:{1} prevHash:{2} selfHash:{3} creator: {4} verifiers: {5}\t" \
+            .format(self.blockNumber, len(self.transactions), self.prevHash, self.selfHash, self.creator, self.verifiers)
 
 if __name__ == '__main__':
     miner = POSMiner()
