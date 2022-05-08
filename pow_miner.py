@@ -62,8 +62,7 @@ class POWMiner:
                     transactions.append(transaction)
                     # print("Valid Transaction")
                 else:
-                    # print("Invalid Transaction")
-                    pass
+                    print(f"Invalid Transaction: {transaction}")
             print("Block transactions validated")
             minedBlock = self.hasher(transactions)
             if isinstance(minedBlock, Block):
@@ -154,7 +153,8 @@ class POWMiner:
             print(f"Block Number: {block.blockNumber}")
             for transaction in block.transactions:
                 print(transaction)
-            print(f"Miner Reward: {block.coinbase}")
+            print(f"Miner Reward: {block.coinbase}")        
+        print("===========================")
 
     def menu(self):
         while True:
@@ -165,9 +165,16 @@ class POWMiner:
             if not resp:
                 continue
             elif resp[0] == 'l':
-                print(self.ledger)
+                print("===========================")
+                print("Balance")
+                for k, v in self.ledger.items():
+                    print(f"{k}: {v}")                
+                print("===========================")
             elif resp[0] == 'b':
-                print(self.blockChain)
+                for block in self.blockChain:
+                    print("===========================")
+                    print(repr(block))
+                print("===========================")
             elif resp[0] == 't':
                 self.displayTransactions()
             elif resp[0] == 'e':
@@ -224,5 +231,3 @@ class Block:
 if __name__ == '__main__':
     miner = POWMiner()
     miner.main()
-
-    

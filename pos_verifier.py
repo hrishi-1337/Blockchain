@@ -4,6 +4,7 @@ import threading
 import pickle
 import random
 import time
+from threading import Thread, Lock
 from hashlib import sha256
 from xmlrpc.client import ServerProxy
 from xmlrpc.server import SimpleXMLRPCServer
@@ -24,6 +25,9 @@ class POSMiner:
         self.leader = None
         self.currentHash = 000000000
         self.contribution = {}
+        self.currentBlock = None
+        self.currentBlockAmount = 0
+        self.mutex = Lock()
 
     def createRPCServer(self):
         print("Creating the RPC server for the Node {0}".format(self.id))
@@ -60,12 +64,16 @@ class POSMiner:
         while True:
             chosen = random.randint(1, node_count)
             print(f"Verifier {chosen} chosen to create block")
-            if self.contribution[chosen] <= 25:
-                self.map[str(chosen)].createBlock()
+            if len(self.blockChain) != 0:
+                if self.contribution[chosen]/len(self.blockChain)  <= 0.25:
+                    self.map[str(chosen)].createBlock()          
+                    time.sleep(20)
+                else:
+                    print(f"Verifier {chosen} skipped since they have more than 25% of the blocks in the blockchain")
             else:
-                pass           
-            time.sleep(20)
-            
+                self.map[str(chosen)].createBlock()          
+                time.sleep(20)
+                
     def createBlock(self):
         print(f"Chosen to create block by Leader node {self.leader}")
         transactions = []
@@ -75,14 +83,26 @@ class POSMiner:
                 transactions.append(transaction)
                 # print("Valid Transaction")
             else:
-                # print("Invalid Transaction")
-                pass
+                print(f"Invalid Transaction: {transaction}")
         print("Block transactions validated")
-        reward = Transaction(int(self.id), 0, 10, True)
-        block = Block(self.blockNumber, transactions, self.currentHash, reward)
+        for transaction in transactions:
+            self.currentBlockAmount += transaction.amount
+        creator = Transaction(int(self.id), 0, 10, True)
+        block = Block(self.blockNumber, transactions, self.currentHash, creator)
         shahash = sha256(str(block).encode('utf-8')).hexdigest()
         block.selfHash = shahash
+        if self.blockNumber == 1:
+            block.stake = 400
+        else:                            
+            if int(self.id) not in self.ledger:
+                self.ledger[int(self.id)]= 0 
+            block.stake = self.ledger[int(self.id)]/4
+            print(f"Tokens staked {block.stake}")
+        self.currentBlock = block
+        print("Broadcasting Block to validators")
+        self.mutex.acquire()
         self.broadcastBlock(block)
+        self.mutex.release()
 
     def validateTransaction(self, transaction):
         if transaction.sender not in self.ledger:
@@ -95,36 +115,85 @@ class POSMiner:
     def broadcastBlock(self, block):
         for k, v, in self.map.items():
             if k != str(self.id):
-                v.receiveBlock(block)
+                hash, id, stake = v.receiveBlock(block)
+                if hash != None and isinstance(self.currentBlock, Block):
+                        if self.currentBlock.selfHash == hash:
+                            if id not in self.currentBlock.verifiers:
+                                self.currentBlock.verifiers.append(id)
+                                self.currentBlock.stake+=stake
 
-    def receiveVote(self):
-        pass
- 
+    def deductStake(self, amount):
+        self.ledger[int(self.id)]-= amount
+
     def receiveBlock(self, block_dict):
         flag = True
         transactions = []
+        transaction_amount = 0
         for transaction in block_dict['transactions']:
             transactions.append(Transaction(transaction['sender'], transaction['receiver'], transaction['amount'], transaction['reward']))
+            transaction_amount += transaction['amount']
         creator = Transaction(block_dict['creator']['sender'], block_dict['creator']['receiver'], block_dict['creator']['amount'], block_dict['creator']['reward'])
         verifier = [ v for v in block_dict['verifiers']]
         block = Block(block_dict['blockNumber'], transactions, block_dict['prevHash'], creator, block_dict['stake'], block_dict['selfHash'], verifier)
-        
-        
-        # print("Block Received")
-        # print(block)
-        # if  block.prevHash != self.currentHash:
-        #     print(f"Block doesnt match current chain. Current hash: {self.currentHash};  Block prevHash: {block.prevHash}")
-        #     flag = False
-        # else:
-        #     for transaction in block.transactions:
-        #         if not self.validateTransaction(transaction):
-        #             print(f"Invalid Transaction: {transaction}")
-        #             flag = False
-        # if flag:
-        #     print("Recived Block Added")
-        #     self.blockChain.append(block)
-        #     self.blockNumber += 1
-        #     self.currentHash = block.selfHash
+        print("Block Received")   
+        print(repr(block))
+
+        for transaction in block.transactions:
+            if not self.validateTransaction(transaction):
+                print(f"Invalid Transaction: {transaction}, deducting stake from Verifier {block.creator.sender}")
+                self.ledger[block.creator.sender] -= block.stake
+                self.map[str(block.creator.sender)].deductStake(block.stake)
+                flag = False
+        if flag:
+            if block.stake >= transaction_amount:
+                print("Received Block Verified, already has sufficient stake")
+                return None, None, None
+            else:                            
+                if int(self.id) not in self.ledger:
+                    self.ledger[int(self.id)]= 0             
+                stake = self.ledger[int(self.id)]/4
+                print("Recieved Block Verified")
+                print(f"Transactions total: {transaction_amount}; Additional Tokens staked {block.stake}")
+                return block.selfHash, int(self.id), stake
+    
+    def broadcastVerifiedBlock(self, block):
+        for k, v, in self.map.items():
+            if k != str(self.id):
+                v.addBlock(block)
+
+    def addBlock(self, block_dict):
+        transactions = []
+        transaction_amount = 0
+        for transaction in block_dict['transactions']:
+            transactions.append(Transaction(transaction['sender'], transaction['receiver'], transaction['amount'], transaction['reward']))
+            transaction_amount += transaction['amount']
+        creator = Transaction(block_dict['creator']['sender'], block_dict['creator']['receiver'], block_dict['creator']['amount'], block_dict['creator']['reward'])
+        verifier = [ v for v in block_dict['verifiers']]
+        block = Block(block_dict['blockNumber'], transactions, block_dict['prevHash'], creator, block_dict['stake'], block_dict['selfHash'], verifier)
+        for i in range(4):
+            self.transactionPool.pop(0)
+        self.blockChain.append(block)
+        self.blockNumber += 1
+        self.currentHash = block.selfHash
+
+    def checkStakeThread(self):
+        thread = threading.Thread(target=self.checkStake)
+        thread.daemon = True
+        thread.start()
+        return thread
+
+    def checkStake(self):
+        while True:
+            if isinstance(self.currentBlock, Block):
+                if self.currentBlock.stake >= self.currentBlockAmount:
+                    self.blockChain.append(self.currentBlock)
+                    self.blockNumber += 1
+                    self.currentHash = self.currentBlock.selfHash
+                    self.mutex.acquire()
+                    self.broadcastVerifiedBlock(self.currentBlock)
+                    self.mutex.release()
+                    self.currentBlock = None
+                    self.currentBlockAmount = 0
 
     def updateLedgerThread(self):
         thread = threading.Thread(target=self.updateLedger)
@@ -136,17 +205,34 @@ class POSMiner:
         while True:
             if self.ledgerIndex < len(self.blockChain):
                 for block in self.blockChain[self.ledgerIndex:]:
-                    for transaction in block.transactions:
+                    for transaction in block.transactions:                
+                        if transaction.sender not in self.ledger:
+                            self.ledger[transaction.sender] = 0                
+                        if transaction.receiver not in self.ledger:
+                            self.ledger[transaction.receiver] = 0
                         if not transaction.reward:
                             self.ledger[transaction.sender] -= transaction.amount
-                        self.ledger[transaction.receiver] += transaction.amount
-                    self.ledger[block.coinbase.sender] += block.coinbase.amount
+                        self.ledger[transaction.receiver] += transaction.amount                
+                    if block.creator.sender not in self.ledger:
+                        self.ledger[block.creator.sender] = 0 
+                    self.ledger[block.creator.sender] += block.creator.amount
+                    for v in block.verifiers:
+                        if v not in self.ledger:
+                            self.ledger[v] = 0 
+                        self.ledger[v] += 5
+                    self.contribution[block.creator.sender]+=1                    
                 self.ledgerIndex = len(self.blockChain)
 
     def displayTransactions(self):
         for block in self.blockChain:
+            print("===========================")
+            print(f"Block Number: {block.blockNumber}")
             for transaction in block.transactions:
                 print(transaction)
+            print(f"Creator: {block.creator.sender} Reward: 10")
+            print(f"Verifiers: {block.verifiers} Reward: 5")
+            print(f"Amount staked: {block.stake}")
+        print("===========================")
 
     def menu(self):
         while True:
@@ -157,9 +243,16 @@ class POSMiner:
             if not resp:
                 continue
             elif resp[0] == 'l':
-                print(self.ledger)
+                print("===========================")
+                print("Balance")
+                for k, v in self.ledger.items():
+                    print(f"{k}: {v}")                
+                print("===========================")
             elif resp[0] == 'b':
-                print(self.blockChain)
+                for block in self.blockChain:
+                    print("===========================")
+                    print(repr(block))
+                print("===========================")
             elif resp[0] == 't':
                 self.displayTransactions()
             elif resp[0] == 'e':
@@ -181,11 +274,12 @@ class POSMiner:
             self.transactionPool = pickle.load(f)
         if self.leader == None:
             self.leader = max(self.map.keys())
-        print(f"Leader Elected : {self.leader}")
-        input("Press <enter> to start miner")
+        input("Press <enter> to start verifier")
+        print(f"Bully algorithm Leader Elected : Node {self.leader}")
         if self.leader == self.id:
             self.rollDiceThread()
-        # self.updateLedgerThread()
+        self.checkStakeThread()
+        self.updateLedgerThread()
         self.menu()
 
 
@@ -201,7 +295,7 @@ class Transaction:
 
 
 class Block:
-    def __init__(self, blockNumber, transactions, prevHash, creator, stake, selfHash=None,verifiers=[]):
+    def __init__(self, blockNumber, transactions, prevHash, creator, stake=0, selfHash=None,verifiers=[]):
         self.blockNumber = blockNumber
         self.transactions = transactions
         self.prevHash = prevHash
@@ -214,11 +308,9 @@ class Block:
         return "Block Number:{0} Transactions:{1} prevHash:{2}\t".format(self.blockNumber, self.transactions, self.prevHash)
 
     def __repr__(self):
-        return "Block Number:{0} Transaction_count:{1} prevHash:{2} selfHash:{3} creator: {4} verifiers: {5}\t" \
-            .format(self.blockNumber, len(self.transactions), self.prevHash, self.selfHash, self.creator, self.verifiers)
+        return "Block Number:{0} Transaction_count:{1} prevHash:{2} selfHash:{3} creator: {4} verifiers: {5} stake: {6}\t" \
+            .format(self.blockNumber, len(self.transactions), self.prevHash, self.selfHash, self.creator, self.verifiers, self.stake)
 
 if __name__ == '__main__':
     miner = POSMiner()
     miner.main()
-
-    
