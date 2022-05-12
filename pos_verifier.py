@@ -153,7 +153,8 @@ class POSMiner:
                     self.ledger[int(self.id)]= 0             
                 stake = self.ledger[int(self.id)]/4
                 print("Recieved Block Verified")
-                print(f"Transactions total: {transaction_amount}; Additional Tokens staked {block.stake}")
+                print(f"Transactions total: {transaction_amount}; Additional Tokens staked: {block.stake}")
+                print("Block signed")
                 return block.selfHash, int(self.id), stake
     
     def broadcastVerifiedBlock(self, block):
