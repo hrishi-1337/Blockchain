@@ -185,7 +185,7 @@ class POWMiner:
             self.id = sys.argv[1]
 
         print("Node number : " +self.id)
-        with open("local_config.json", "r") as jsonfile:
+        with open("aws_config.json", "r") as jsonfile:
             self.config = json.load(jsonfile)
             self.host = self.config[self.id][0]
             self.port = self.config[self.id][1]
