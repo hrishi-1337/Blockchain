@@ -124,7 +124,7 @@ class POWMiner:
                     print(f"Invalid Transaction: {transaction}")
                     flag = False
         if flag:
-            print("Recived Block Validate and Added")
+            print("Received Block validated and added to the blockchain")
             self.blockChain.append(block)
             self.blockNumber += 1
             self.currentHash = block.selfHash
